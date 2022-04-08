@@ -1,0 +1,69 @@
+#!/bin/bash
+
+DB_HOST="${DB_HOST:-localhost}"
+DB_PASS="${DB_PASS:-zmpass}"
+DB_NAME="${DB_NAME:-zm}"
+DB_USER="${DB_USER:-zmuser}"
+MYSQL_ROOT_PWD="${MYSQL_ROOT_PWD:-root}"
+RESET="${RESET:-false}"
+
+echo "Configuring zm settings ..."
+sed -i "s/ZM_DB_HOST=localhost/ZM_DB_HOST=$DB_HOST/g" /etc/zm/zm.conf
+sed -i "s/ZM_DB_PASS=zmpass/ZM_DB_PASS=$DB_PASS/g" /etc/zm/zm.conf
+sed -i "s/ZM_DB_NAME=zm/ZM_DB_NAME=$DB_NAME/g" /etc/zm/zm.conf
+sed -i "s/ZM_DB_USER=zmuser/ZM_DB_USER=$DB_USER/g" /etc/zm/zm.conf
+echo "Configuring zm settings is done ..."
+
+#echo "Configuring zm settings ..."
+#echo ZM_DB_HOST=$DB_HOST >> /etc/zm/conf.d/03-variables.conf
+#echo ZM_DB_PASS=$DB_PASS >> /etc/zm/conf.d/03-variables.conf
+#echo ZM_DB_USER=$DB_USER >> /etc/zm/conf.d/03-variables.conf
+#RUN chown -R root:www-data /etc/zm/conf.d/03-variables.conf
+#echo "Configuring zm settings is done ..."
+
+clean_fs() {
+    echo "Cleaning up FS ..."
+    rm -rf /var/cache/zoneminder/events/*
+    rm -rf /var/tmp/zm/*
+    rm -rf /var/log/zm/*
+    rm -rf /var/tmp/zm/*
+    echo "Cleaning up FS done ..."
+}
+
+setup_db() {
+    echo "Setting up sql on $DB_HOST starting ..."
+    mysql --host=$DB_HOST -uroot -p$MYSQL_ROOT_PWD -e "DROP DATABASE $DB_NAME"
+    echo "Cleaning up DB $DB_NAME done ..."
+    mysql --host=$DB_HOST -uroot -p$MYSQL_ROOT_PWD < /usr/share/zoneminder/db/zm_create.sql
+    echo "Creating ZM db done ..."
+    mysql --host=$DB_HOST -uroot -p$MYSQL_ROOT_PWD -e "grant lock tables,alter,drop,select,insert,update,delete,create,index,alter routine,create routine, trigger,execute on $DB_NAME.* to '$DB_USER'@'%' identified by '$DB_PASS';"
+    echo "Setting up privileges done ..."
+    echo "Setting up mysql is done ..."
+}
+
+if ([ "$DB_HOST" = 'localhost' ] && [ "$RESET" ]) || ([ "$DB_HOST" = '127.0.0.1' ] && [ "$RESET" ])
+then
+    echo "starting MariaDB on localhost ..."
+    /etc/init.d/mariadb restart
+    echo "MariaDB is running on localhost ..."
+    clean_fs
+fi
+
+if [ "$RESET" = "true" ] 
+then 
+    setup_db
+    clean_fs
+else
+    RESULT=`mysql --host=$DB_HOST -u$DB_USER -p$DB_PASS --skip-column-names -e "SHOW DATABASES LIKE '$DB_NAME'"`
+    if [ "$RESULT" == "$DB_NAME" ]; then
+        echo "Using existing DB"
+    else
+        setup_db
+    fi
+fi
+
+mysqlcheck --host=$DB_HOST -u$DB_USER -p$DB_PASS --check-upgrade --auto-repair
+
+echo "Starting ..."
+
+/usr/bin/supervisord
